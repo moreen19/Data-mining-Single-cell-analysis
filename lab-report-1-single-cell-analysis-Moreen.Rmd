@@ -1,0 +1,328 @@
+---
+title: "Single cell Analysis of human kidney tumours"
+output:
+  html_document: default
+  pdf_document: default
+date: "2022-09-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This is a single cell analysis of human kidney tumor cells using Seurat.
+
+### loading required packages
+
+```{r, results=FALSE}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(singlet)
+library(ggplot2)
+```
+
+## Step 1. Loading data
+
+I downloaded my data set(local.rds) and uploaded it into R ,i then  used the readRDS function to read the data set and assigned it the name data. then used str() to see the internal structure of my data 
+
+```{r}
+data <- readRDS("C:/Users/MAURINE/Desktop/lab report 2/local.rds")
+str(data)
+```
+
+I then created a new Seurat object from my original Seurat(V4) data set local using the CreateSeuratObject() function.I did this to create a representation of single cell expression of the data that contains both the count matrix and analysis for a single cell data set in preparation for my analysis.After creation of the new Seurat object i added back the metadata from the original data set to aid in my analysis.
+
+```{r}
+data2 <- CreateSeuratObject(data@assays$RNA@counts)
+data2@meta.data <- data@meta.data
+
+```
+
+
+## Step 2. Preprocessing data
+
+In this section i considered the quality and type of cells that i would be including in the analysis and also carried out normalization of the data.
+
+### checking the quality and type of cells
+
+I first plotted box plots of the Genes detected/nfeature_RNA and Number of UMIs/nCount_RNA in order to find out if there are any that are below the recommended/desirable minimum values.
+
+```{r}
+ggplot(data2@meta.data, aes(x="Genes detected", y= data2@meta.data[["nFeature_RNA"]] ))+
+  geom_boxplot(fill="orange")
+
+```
+fig(1)
+
+figure(1) above shows that there are no outliers on the lower end and the minimum genes detected per cell is above 200  and therefore there's no need to subset.
+
+
+```{r}
+ggplot(data2@meta.data, aes(x="Number of UMIs", y= data2@meta.data[["nCount_RNA"]] ))+
+  geom_boxplot(fill="green")
+
+```
+fig(2)
+
+fig(2) also shows that there seems to be no outliers on the lower end which means the values we have are ok and there's no need to subset.UMI values above 500 are deemed to be ok for analysis.
+
+The histogram below of RNA feature counts also shows that the values are within the desired range.
+
+```{r}
+v <- colSums(data2@assays$RNA@counts!=0)
+hist(v)
+```
+fig3
+
+
+### Normalizing the data
+
+I used the LogNormalize function to normalize the data.This allows for accurate comparisons of gene expressions across samples.I preferred to use  Lognormalize because i had created a Seurat object and not a singlecellExperiment object and also because Seurat lognormalize calculates highly variable genes and focuses these for future downstream analysis.
+
+[link to seurats lognormalize](https://learn.gencore.bio.nyu.edu/single-cell-rnaseq/seurat-part-3-data-normalization/#:~:text=By%20default%2C%20Seurat%20implements%20a,and%20log%2Dtransforms%20the%20result.)
+
+```{r}
+data2@assays$RNA@data <- LogNormalize(data2@assays$RNA@data)
+```
+## Step 3-4. Dimension Reduction and clustering
+
+NMF was my chosen method for dimension reduction since single cell count data is strictly non negative and thus non negative matrix factorization would be the best method to use.Dimension reduction is done  to embed each cell’s high-dimensional expression profile into a low-dimensional representation to facilitate visualization and clustering.
+
+[Article on dimension reduction](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1861-6)
+
+I set seed to ensure reproducibility of the model and used the RunNMF function to carryout the dimension reduction on the data.
+
+```{r results='hide'}
+set.seed(122)
+data3 <- RunNMF(data2)
+
+```
+
+I used Graph based clustering to cluster the single cell data sets because of its scalability in that it only requires a K-nearest neighbor search that can be done in loglinear time on average which is different from other clustering methods whose run times are quadratic in relation to number of cells or which make strong assumptions about the shapes of clusters and hence are a bit biased.
+.
+
+[link to info on Graph based clustering](https://http://bioconductor.org/books/3.14/OSCA.basic/clustering.html)
+
+First i used the FindNeighbours function to compute the nearest neighbors for the data set, then i used the Findclusters function to indentify clusters of cells by a shared nearest neighbor and finally Used the RunUMAP function to be able plot the UMAP.
+```{r}
+data3 <- FindNeighbors(data3, reduction = "nmf", dims = 1:ncol(data3@reductions$nmf))
+
+data3 <- FindClusters(data3)
+
+data3 <- RunUMAP(data3, dims = 1:ncol(data3@reductions$nmf), reduction = "nmf")
+
+RankPlot(data3)
+
+
+```
+fig (4)
+
+
+The value of K was estimated through cross validation where the relative test set error was plotted against the factorization ranks for the three replicates and the rank in which the mean value across all replicates was low  was chosen as the best value for K as shown in figure(4) above.k= 45
+
+```{r}
+#using Dmplot to plot UMAP showing the various clusters formed after clustering.
+
+DimPlot(data3)
+```
+fig(5)
+
+Fig 5 above shows a UMAP showing the various cell clusters in the data set.
+
+## 5. Advanced Analysis
+
+### Cell Annotation
+
+Cell annotation is where we seek to indentify the cell types present in our objects by using existing celltype  references .
+I tried to carryout cell annotation by use of the singleR package but the data sets available in celldex did not have genes that matched with what i had in my data set and attempts to install package EnsDb.Hsapiens.v79 also proved futile since i got an error message that i did not have a certain dll installed in my computer which i was also not able to solve. 
+
+As seen in one example below where i was using the HumanPrimaryCellAtlasData.
+Running the code chunks  below resulted in an error message stating that there were no genes in the ref to match the test data.i Was unable to find a data set that had matching genes.(N/B:i have commented out the lines of code to allow for knitting)
+
+I first installed and loaded the singleR library then proceeded to load the different data sets assigning them to an object named reference.I then converted my seurat object to a singleCellExperiment using the as.SingleCellExperiment function and used SingleR to carryout the annotation
+
+
+```{r}
+
+library(SingleR)
+
+reference <- celldex::HumanPrimaryCellAtlasData()
+```
+
+```{r}
+#i ran the codes below but there were no common genes between test and ref
+
+#results <- SingleR(test = as.SingleCellExperiment(data3), ref = reference, labels = ref$label.main)
+
+#data3$singler_labels<- results$labels
+
+```
+
+
+
+### Visualizing cell maker genes for each cluster.
+
+To indentify cell maker genes for each cluster i chose scran's FindAllMakers because it finds the gene makers for each cluster compared to all other remaining cells.
+
+I only wanted the positive markers so i set only.pos to TRUE and used the default settings for the logfc.threshold which is used to limit the genes to be tested based on logscale difference between two groups of cells.
+
+
+```{r warning=FALSE}
+library(scran)
+data3.markers <- FindAllMarkers(data3, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+data3.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 2, order_by = avg_log2FC)
+
+```
+Table (1)
+
+Table(1) above shows the marker genes detected per cluster and i used the DotHeatmap plot visualize some of these marker genes as seen below.
+
+
+```{r}
+# in order to plot a DotHeatmap i needed to find the variable features in my data and then scale the data before i could plot it
+
+data4 <- FindVariableFeatures(data3, selection.method = "vst", nfeatures = 2000)
+
+data4 <- ScaleData(data4)
+
+```
+
+I then went ahead and selected a couple of marker genes and plotted them.Some of the genes were dropped during scaling and thus did not get plotted.
+
+```{r}
+feature <- c("ENSG00000075223","ENSG00000130396","ENSG00000112936","ENSG00000157782","ENSG00000112787","ENSG00000154839","ENSG00000111348","ENSG00000024422","ENSG00000167658")
+DoHeatmap(data4, features = feature)
+```
+
+
+
+### Cell cycle Assignment
+
+To carry out the cell cycle assignment i needed to first use the EnsDb.Hsapiens.V79 package to get the corresponding SYMBOL that i would then use in my code  to find the cyclin.genes that are used in showing the cell cycle.As stated above i was not Able to install the package but i have included the code that would have enabled me to carry out the cycle assignment.
+
+```{r}
+#After using the Hsapiens package i would then convert my data to a single cell experiment using the code below
+
+#data3sce<- as.SingleCellExperiment(data3)
+#data3sce
+```
+
+
+```{r}
+# Then i load the scater library and use the code below to get the cyclin genes and plot them.
+
+#library(scater)
+#cyclin.genes <- grep("^Ccn[abde][0-9]$", rowData(data3sce)$SYMBOL)
+#cyclin.genes <- rownames(data3sce)[cyclin.genes]
+#cyclin.genes
+ 
+```
+
+## Step 6 :Visualize
+
+My dimensional reduction method of choice for visualization on 2D coordinates is the UMAP.I chose the UMAP over other methods such as t-NSE and PCA because it is much faster to run and preserves the data global structure and is very effective for visualizing clusters or groups of data points.
+
+Below is a visualization of author_cell_type sample loadings.I had already run UMAP in the codes above.see section on dimension reduction and clustering.
+
+```{r}
+DimPlot(data3 ,reduction = "umap", group.by = "author_cell_type")
+
+```
+For the annotation section the UMAP visualization of cell types would look as shown below
+
+```{r}
+#showing the various cell type clusters.
+DimPlot(data3, reduction="umap", group.by= "cell_type")
+
+```
+ A visualization of several marker genes on the UMAP would look as follows as shown by the feature plots below.
+ 
+```{r}
+# selected a sample of marker genes and plotted their feature plots.
+
+FeaturePlot(data3, features= c("ENSG00000166426", "ENSG00000130396","ENSG00000112936","ENSG00000099250"))
+
+```
+ 
+### Another type of plot that might aid in understanding more about the data is a metadataplot.In this case showing the representation of cell_type per factor.
+
+ 
+```{r}
+
+MetadataPlot(data3, "cell_type", reduction = "nmf")
+
+```
+ 
+### Changing the dimention reduction method and using PCA instead.
+
+```{r warning=FALSE}
+pca_data <-FindVariableFeatures(data2, selection.method = "vst", nfeatures = 2000)
+
+pca_data <- ScaleData(pca_data)
+pca_data<- RunPCA(pca_data)
+DimPlot(pca_data, reduction = "pca")
+```
+
+
+```{r}
+# plotting the elbow plot to calculate dimensionality using the elbowplot function
+
+ElbowPlot(pca_data)
+```
+According to the elbow plot above we can observe the elbow around 9 to 10 meaning a majority of the signals are covered within the first 10 PC's.
+
+I then clustered the cells again
+
+```{r}
+pca_data<- FindNeighbors(pca_data, dims = 1:10 )
+pca_data<- FindClusters(pca_data,resolution = 0.5)
+pca_data <- RunUMAP(pca_data, dims = 1:10 )
+
+DimPlot(pca_data, reduction = "umap")
+
+```
+The figure above shows cell clusterings after using PCA for dimension reduction.
+The clusterings are not as well defined as in the nmf clusterings and they are also fewer in number.
+
+### checking for marker genes after PCA.
+
+```{r warning=FALSE}
+library(scran)
+pca.markers <- FindAllMarkers(pca_data, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+pca.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 2, order_by = avg_log2FC)
+
+```
+
+The total number of cell cluster marker genes after PCA are fewer than those got after NMF.Which might mean that NMF produces better and more defined clusters.
+
+```{r}
+#Feature plots of Marker genes after PCA.
+
+FeaturePlot(pca_data, features= c("ENSG00000166426", "ENSG00000130396","ENSG00000112936","ENSG00000099250"))
+```
+
+## Step 7. Conclusions
+
+The packages available for single cell analysis like Seurat and Singlet do a good job in helping to analyze cells and create visualizations though some are not compatible with all types of data sets for example singleR that has cell references in celldex that are not compatible to all type of data sets.
+
+Though the NMF produced better results it took a while to run and carryout the dimension reduction while PCA was much faster.
+
+From the plots and visualizations i learnt that the different clusters in the cells are not only due to cell type but there are also other factors that 
+that some of the cells share in common like for example my data dealt with kidney tissue so all the cells though different are from the same type of tissue.
+
+
+## References
+
+1) seurat Lognormaize - https://learn.gencore.bio.nyu.edu/single-cell-rnaseq/seurat-part-3-data-normalization/#:~:text=By%20default%2C%20Seurat%20implements%20a,and%20log%2Dtransforms%20the%20result.
+
+2)Article on dimension reduction  - https://genomebiology.biomedcentral.com/articles/10.1186/s13059-019-1861-6
+
+3)Graph based clustering - https://http://bioconductor.org/books/3.14/OSCA.basic/clustering.html
+
+
+
